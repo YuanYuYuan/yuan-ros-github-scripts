@@ -44,8 +44,12 @@
         ];
 
         shellHook = ''
-          # Install the package in editable mode so entry points work
-          pip install -e . --quiet --no-deps 2>/dev/null
+          export PYTHONPATH="''${PWD}:''${PYTHONPATH:-}"
+
+          # Expose entry points as shell functions
+          ros-ci-for-pr() { python -m ros_github_scripts.ci_for_pr "$@"; }
+          ros-github-contribution-report() { python -m ros_github_scripts.generate_contribution_report "$@"; }
+          export -f ros-ci-for-pr ros-github-contribution-report
 
           # Load GITHUB_ACCESS_TOKEN from local token file if not already set
           if [ -z "''${GITHUB_ACCESS_TOKEN:-}" ] && [ -f "''${PWD}/GITHUB_TOKEN.txt" ]; then
