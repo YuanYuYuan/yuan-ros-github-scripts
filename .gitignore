@@ -8,3 +8,15 @@ build/
 dist/
 venv/
 GITHUB_TOKEN.txt
+.envrc
+
+# Local dev environment
+.direnv/
+flake.lock
+
+# AI tooling — never commit
+.claude/
+.aider*
+.cursor/
+.copilot/
+CLAUDE.md
