@@ -357,38 +357,67 @@ def fetch_test_report(build_url: str, auth: Optional[tuple] = None) -> Optional[
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    build_resp = requests.get(f'{build_url.rstrip("/")}/api/json?tree=duration', auth=auth)
+    if build_resp.status_code == 200:
+        data['_build_duration_ms'] = build_resp.json().get('duration', 0)
+    return data
 
 
 def format_test_report_comment(
     platform_reports: Dict[str, Optional[dict]],
+    platform_urls: Dict[str, str],
     launcher_url: str,
 ) -> str:
-    """Format per-platform test results as a markdown comment."""
+    """Format per-platform test results as markdown tables."""
     lines = ['## CI Test Results']
+
+    # Summary table
+    lines.append('')
+    lines.append('| Platform | Result | Failed | Passed | Skipped | Duration | Report |')
+    lines.append('|----------|--------|-------:|-------:|--------:|---------:|--------|')
     for platform, report in platform_reports.items():
+        build_url = platform_urls.get(platform, '')
+        report_url = f'{build_url}/testReport/' if build_url else ''
+        report_link = f'[results]({report_url})' if report_url else '—'
         if report is None:
-            lines.append(f'\n**{platform}** — results not available (build still running?)')
-            continue
-        fail_count = report.get('failCount', 0)
-        pass_count = report.get('passCount', 0)
-        skip_count = report.get('skipCount', 0)
-        if fail_count == 0:
-            lines.append(f'\n**{platform}** ✅ {pass_count} passed / {skip_count} skipped')
+            lines.append(f'| {platform} | ⚪ N/A | — | — | — | — | {report_link} |')
         else:
+            fail = report.get('failCount', 0)
+            passed = report.get('passCount', 0)
+            skipped = report.get('skipCount', 0)
+            status = '✅ pass' if fail == 0 else '❌ fail'
+            ms = report.get('_build_duration_ms', 0)
+            duration = f'{ms // 60000}m {(ms % 60000) // 1000}s' if ms else '—'
             lines.append(
-                f'\n**{platform}** ❌ {fail_count} failed'
-                f' / {pass_count} passed / {skip_count} skipped'
+                f'| {platform} | {status} | {fail} | {passed} | {skipped}'
+                f' | {duration} | {report_link} |'
             )
-            failures = [
+
+    # Per-platform failure tables (collapsible, sorted by package)
+    for platform, report in platform_reports.items():
+        if report is None or report.get('failCount', 0) == 0:
+            continue
+        failures = sorted(
+            (
                 (c['className'] if c['className'] != 'projectroot' else s['name'], c['name'])
                 for s in report.get('suites', [])
                 for c in s.get('cases', [])
                 if c['status'] not in ('PASSED', 'SKIPPED', 'FIXED')
-            ]
-            for pkg, test in failures:
-                lines.append(f'  - `{pkg}` — {test}')
-    lines.append(f'\n[Full results]({launcher_url})')
+            ),
+            key=lambda x: x[0],
+        )
+        fail_count = report.get('failCount', 0)
+        lines.append(f'\n<details>')
+        lines.append(f'<summary><b>{platform}</b> — {fail_count} failure(s)</summary>')
+        lines.append('')
+        lines.append('| Package | Test |')
+        lines.append('|---------|------|')
+        for pkg, test in failures:
+            lines.append(f'| `{pkg}` | {test} |')
+        lines.append('')
+        lines.append('</details>')
+
     return '\n'.join(lines)
 
 
@@ -569,7 +598,8 @@ def main():
         for platform, build_url in child_urls.items():
             logger.info(f'Fetching test report for {platform} from {build_url}')
             platform_reports[platform] = fetch_test_report(build_url, auth=jenkins_auth)
-        comment_texts.append(format_test_report_comment(platform_reports, parsed.test_report))
+        comment_texts.append(
+            format_test_report_comment(platform_reports, child_urls, parsed.test_report))
 
     comment_results(parsed.comment, '\n'.join(comment_texts), chosen_pulls)
 
